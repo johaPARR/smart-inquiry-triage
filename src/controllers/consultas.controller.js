@@ -2,14 +2,41 @@
 const Consulta = require('../models/Consulta');
 const { clasificar } = require('../services/ai.service');
 
+// Clasifica una consulta ya guardada y actualiza su estado.
+// Devuelve true si salió bien. Si la IA falla, la consulta queda en "error" (no se pierde).
+async function clasificarYGuardar(consulta) {
+  let clasificacion;
+  try {
+    clasificacion = await clasificar({ nombre: consulta.nombre, canal: consulta.canal, mensaje: consulta.mensaje });
+  } catch (err) {
+    consulta.estado = 'error';
+    consulta.errorDetalle = err.message;
+    await consulta.save();
+    return false;
+  }
+
+  consulta.clasificacion = clasificacion;
+  consulta.estado = 'clasificada';
+  consulta.errorDetalle = undefined; // limpia el error de un intento anterior
+  await consulta.save();
+  return true;
+}
+
 // POST /api/consultas -> guarda, clasifica y devuelve la consulta
 async function crear(req, res) {
   const { nombre, email, canal, mensaje } = req.body;
   const externalId = req.body.externalId.trim();
 
-  // Idempotencia: si ya existe ese externalId, devolvemos la existente (200)
   const existente = await Consulta.findOne({ externalId });
-  if (existente) return res.status(200).json(existente);
+  if (existente) {
+    // Idempotencia: si ya existe ese externalId, devolvemos la existente (200)...
+    if (existente.estado !== 'error') return res.status(200).json(existente);
+
+    // ...salvo que haya quedado en "error": en ese caso se reintenta la clasificación
+    const ok = await clasificarYGuardar(existente);
+    if (!ok) return res.status(502).json({ error: 'Falló la clasificación con IA', consulta: existente });
+    return res.status(200).json(existente);
+  }
 
   let consulta;
   try {
@@ -23,20 +50,8 @@ async function crear(req, res) {
     throw err;
   }
 
-  let clasificacion;
-  try {
-    clasificacion = await clasificar({ nombre: consulta.nombre, canal: consulta.canal, mensaje: consulta.mensaje });
-  } catch (err) {
-    // La IA falló: la consulta NO se pierde, queda en estado "error"
-    consulta.estado = 'error';
-    consulta.errorDetalle = err.message;
-    await consulta.save();
-    return res.status(502).json({ error: 'Falló la clasificación con IA', consulta });
-  }
-
-  consulta.clasificacion = clasificacion;
-  consulta.estado = 'clasificada';
-  await consulta.save();
+  const ok = await clasificarYGuardar(consulta);
+  if (!ok) return res.status(502).json({ error: 'Falló la clasificación con IA', consulta });
   return res.status(201).json(consulta);
 }
 

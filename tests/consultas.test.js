@@ -108,6 +108,32 @@ describe('POST /api/consultas', () => {
   });
 });
 
+describe('POST /api/consultas: reintento de consultas en error', () => {
+  test('200: si la consulta quedó en "error" y se reenvía, se vuelve a clasificar', async () => {
+    const doc = crearDocFalso({ ...datosValidos, estado: 'error', errorDetalle: 'Gemini respondió 503' });
+    Consulta.findOne.mockResolvedValue(doc);
+    clasificar.mockResolvedValue(clasificacion);
+
+    const res = await request(app).post('/api/consultas').set(KEY).send(datosValidos);
+
+    expect(res.status).toBe(200);
+    expect(res.body.estado).toBe('clasificada');
+    expect(doc.errorDetalle).toBeUndefined();
+    expect(Consulta.create).not.toHaveBeenCalled();
+  });
+
+  test('502: si el reintento vuelve a fallar, sigue en "error"', async () => {
+    const doc = crearDocFalso({ ...datosValidos, estado: 'error' });
+    Consulta.findOne.mockResolvedValue(doc);
+    clasificar.mockRejectedValue(new Error('Gemini respondió 503'));
+
+    const res = await request(app).post('/api/consultas').set(KEY).send(datosValidos);
+
+    expect(res.status).toBe(502);
+    expect(doc.estado).toBe('error');
+  });
+});
+
 describe('API key', () => {
   test('401: sin x-api-key', async () => {
     const res = await request(app).get('/api/consultas');
