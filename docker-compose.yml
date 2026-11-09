@@ -1,0 +1,13 @@
+﻿services:
+  api:
+    build: .
+    container_name: triage-api
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    env_file:
+      - .env
+    environment:
+      MONGO_URI: mongodb://host.docker.internal:27018/triage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
